@@ -1,16 +1,17 @@
-'use strict';
-const {
-  eachAsync,
-  makeInterruptibleAsyncInterval,
+import { expect } from 'chai';
+import * as sinon from 'sinon';
+
+import { LEGACY_HELLO_COMMAND } from '../../src/constants';
+import { MongoRuntimeError } from '../../src/error';
+import {
   BufferPool,
-  shuffle,
-  isHello
-} = require('../../src/utils');
-const { expect } = require('chai');
-const sinon = require('sinon');
-const { MongoRuntimeError } = require('../../src/error');
-const { LEGACY_HELLO_COMMAND } = require('../../src/constants');
-const { createTimerSandbox } = require('./timer_sandbox');
+  eachAsync,
+  isHello,
+  makeInterruptibleAsyncInterval,
+  parseIndexOptions,
+  shuffle
+} from '../../src/utils';
+import { createTimerSandbox } from './timer_sandbox';
 
 describe('driver utils', function () {
   context('eachAsync()', function () {
@@ -524,5 +525,76 @@ describe('driver utils', function () {
       const doc = { [LEGACY_HELLO_COMMAND]: false, hello: false };
       expect(isHello(doc)).to.be.false;
     });
+  });
+
+  describe('parseIndexOptions()', () => {
+    const testCases = [
+      {
+        description: 'single string',
+        input: 'sample_index',
+        output: { name: 'sample_index_1', keys: undefined, fieldHash: { sample_index: 1 } }
+      },
+      {
+        description: 'single [string, IndexDirection]',
+        input: ['sample_index', -1],
+        output: { name: 'sample_index_1', keys: undefined, fieldHash: { sample_index: 1 } }
+      },
+      {
+        description: 'array of strings',
+        input: ['sample_index1', 'sample_index2', 'sample_index3'],
+        output: {
+          name: 'sample_index1_1_sample_index2_1_sample_index3_1',
+          keys: undefined,
+          fieldHash: { sample_index1: 1, sample_index2: 1, sample_index3: 1 }
+        }
+      },
+      {
+        description: 'array of [string, IndexDirection]',
+        input: [
+          ['sample_index1', -1],
+          ['sample_index2', 1],
+          ['sample_index3', '2d']
+        ],
+        output: {
+          name: 'sample_index1_-1_sample_index2_1_sample_index3_2d',
+          keys: undefined,
+          fieldHash: { sample_index1: -1, sample_index2: 1, sample_index3: '2d' }
+        }
+      },
+      {
+        description: 'single  { [key: string]: IndexDirection }',
+        input: { d: { sample_index: 1 } },
+        output: { name: 'd_[object Object]', keys: ['d'], fieldHash: { d: { sample_index: 1 } } }
+      },
+      {
+        description: 'array of { [key: string]: IndexDirection }',
+        input: { d: { sample_index1: -1 }, k: { sample_index2: 1 }, n: { sample_index2: '2d' }},
+        output: {
+          name: 'd_[object Object]_k_[object Object]_n_[object Object]',
+          keys: ['d', 'k', 'n'],
+          fieldHash: {
+            d: { sample_index1: -1 },
+            k: { sample_index2: 1 },
+            n: { sample_index2: '2d' }
+          }
+        }
+      },
+      {
+        name: 'mixed array of [string, [string, IndexDirection], { [key: string]: IndexDirection }]',
+        input: ['sample_index1', ['sample_index2', -1], { d: { sample_index2: '2d' } }],
+        output: {
+          name: 'sample_index1_1_sample_index2_-1_d_[object Object]',
+          keys: ['d'],
+          fieldHash: { sample_index1: 1, sample_index2: -1, d: { sample_index2: '2d' } }
+        }
+      }
+    ];
+
+    for (const { description, input, output } of testCases) {
+      it(`should parse index options correctly when input is: ${description}`, () => {
+        const real_output = parseIndexOptions(input);
+        expect(real_output).to.eql(output);
+      });
+    }
   });
 });
