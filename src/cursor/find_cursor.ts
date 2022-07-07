@@ -1,11 +1,12 @@
 import type { Document } from '../bson';
-import { MongoInvalidArgumentError, MongoTailableCursorError } from '../error';
+import { MongoInvalidArgumentError, MongoRuntimeError, MongoTailableCursorError } from '../error';
 import type { ExplainVerbosityLike } from '../explain';
 import type { MongoClient } from '../mongo_client';
 import type { CollationOptions } from '../operations/command';
 import { CountOperation, CountOptions } from '../operations/count';
 import { executeOperation, ExecutionResult } from '../operations/execute_operation';
 import { FindOperation, FindOptions } from '../operations/find';
+import { GetMoreOperation } from '../operations/get_more';
 import type { Hint } from '../operations/operation';
 import type { ClientSession } from '../sessions';
 import { formatSort, Sort, SortDirection } from '../sort';
@@ -92,29 +93,46 @@ export class FindCursor<TSchema = any> extends AbstractCursor<TSchema> {
   }
 
   /** @internal */
-  override _getMore(batchSize: number, callback: Callback<Document>): void {
+  _getMore(callback: Callback<Document>): void {
+    const cursorId = this.id;
+    const cursorNs = this.namespace;
+    const server = this.server;
+
+    if (cursorId == null) {
+      return callback(new MongoRuntimeError('Unable to iterate cursor with no id'));
+    }
+
+    if (server == null) {
+      return callback(new MongoRuntimeError('Unable to iterate cursor without selected server'));
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    let batchSize = this.cursorOptions.batchSize!;
     // NOTE: this is to support client provided limits in pre-command servers
     const numReturned = this[kNumReturned];
     if (numReturned) {
-      const limit = this[kBuiltOptions].limit;
-      batchSize =
-        limit && limit > 0 && numReturned + batchSize > limit ? limit - numReturned : batchSize;
+      const limit = this[kBuiltOptions].limit ?? 0;
+      batchSize = limit > 0 && numReturned + batchSize > limit ? limit - numReturned : batchSize;
 
       if (batchSize <= 0) {
         return this.close(callback);
       }
     }
 
-    super._getMore(batchSize, (err, response) => {
-      if (err) return callback(err);
+    executeOperation(
+      this.client,
+      new GetMoreOperation(cursorNs, cursorId, server, this.cursorOptions),
+      (error, response) => {
+        if (error) return callback(error);
 
-      // TODO: wrap this in some logic to prevent it from happening if we don't need this support
-      if (response) {
-        this[kNumReturned] = this[kNumReturned] + response.cursor.nextBatch.length;
+        if (response) {
+          // TODO: wrap this in some logic to prevent it from happening if we don't need this support
+          this[kNumReturned] = this[kNumReturned] + response.cursor.nextBatch.length;
+        }
+
+        callback(undefined, response);
       }
-
-      callback(undefined, response);
-    });
+    );
   }
 
   /**

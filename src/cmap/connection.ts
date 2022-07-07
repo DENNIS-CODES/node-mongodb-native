@@ -619,6 +619,11 @@ export class Connection extends TypedEventEmitter<ConnectionEvents> {
     if (typeof options.maxAwaitTimeMS === 'number') {
       getMoreCmd.maxTimeMS = options.maxAwaitTimeMS;
     }
+
+    if (typeof options.maxTimeMS === 'number') {
+      getMoreCmd.maxTimeMS = options.maxTimeMS;
+    }
+
     // we check for undefined specifically here to allow falsy values
     // eslint-disable-next-line no-restricted-syntax
     if (options.comment !== undefined) {

@@ -7,11 +7,13 @@ import {
   ChangeStream
 } from '../change_stream';
 import { INIT, RESPONSE } from '../constants';
+import { MongoRuntimeError } from '../error';
 import type { MongoClient } from '../mongo_client';
 import type { TODO_NODE_3286 } from '../mongo_types';
 import { AggregateOperation } from '../operations/aggregate';
 import type { CollationOptions } from '../operations/command';
 import { type ExecutionResult, executeOperation } from '../operations/execute_operation';
+import { GetMoreOperation } from '../operations/get_more';
 import type { ClientSession } from '../sessions';
 import { type Callback, type MongoDBNamespace, maxWireVersion } from '../utils';
 import { type AbstractCursorOptions, AbstractCursor } from './abstract_cursor';
@@ -134,9 +136,7 @@ export class ChangeStreamCursor<
   }
 
   clone(): AbstractCursor<TChange> {
-    return new ChangeStreamCursor(this.client, this.namespace, this.pipeline, {
-      ...this.cursorOptions
-    });
+    return new ChangeStreamCursor(this.client, this.namespace, this.pipeline, this.cursorOptions);
   }
 
   _initialize(session: ClientSession, callback: Callback<ExecutionResult>): void {
@@ -177,18 +177,34 @@ export class ChangeStreamCursor<
     );
   }
 
-  override _getMore(batchSize: number, callback: Callback): void {
-    super._getMore(batchSize, (err, response) => {
-      if (err) {
-        return callback(err);
+  _getMore(callback: Callback<Document>) {
+    const cursorId = this.id;
+    const cursorNs = this.namespace;
+    const server = this.server;
+
+    if (cursorId == null) {
+      return callback(new MongoRuntimeError('Unable to iterate cursor with no id'));
+    }
+
+    if (server == null) {
+      return callback(new MongoRuntimeError('Unable to iterate cursor without selected server'));
+    }
+
+    executeOperation(
+      this.client,
+      new GetMoreOperation(cursorNs, cursorId, server, this.cursorOptions),
+      (error, response) => {
+        if (error) {
+          return callback(error);
+        }
+
+        this.maxWireVersion = maxWireVersion(this.server);
+        this._processBatch(response as ChangeStreamAggregateRawResult<TChange>);
+
+        this.emit(ChangeStream.MORE, response);
+        this.emit(ChangeStream.RESPONSE);
+        callback(error, response);
       }
-
-      this.maxWireVersion = maxWireVersion(this.server);
-      this._processBatch(response as TODO_NODE_3286 as ChangeStreamAggregateRawResult<TChange>);
-
-      this.emit(ChangeStream.MORE, response);
-      this.emit(ChangeStream.RESPONSE);
-      callback(err, response);
-    });
+    );
   }
 }

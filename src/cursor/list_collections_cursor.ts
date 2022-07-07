@@ -1,6 +1,8 @@
 import type { Document } from '../bson';
 import type { Db } from '../db';
+import { MongoRuntimeError } from '../error';
 import { executeOperation, ExecutionResult } from '../operations/execute_operation';
+import { GetMoreOperation } from '../operations/get_more';
 import {
   CollectionInfo,
   ListCollectionsOperation,
@@ -48,5 +50,25 @@ export class ListCollectionsCursor<
       // TODO: NODE-2882
       callback(undefined, { server: operation.server, session, response });
     });
+  }
+
+  _getMore(callback: Callback<Document>) {
+    const cursorId = this.id;
+    const cursorNs = this.namespace;
+    const server = this.server;
+
+    if (cursorId == null) {
+      return callback(new MongoRuntimeError('Unable to iterate cursor with no id'));
+    }
+
+    if (server == null) {
+      return callback(new MongoRuntimeError('Unable to iterate cursor without selected server'));
+    }
+
+    executeOperation(
+      this.client,
+      new GetMoreOperation(cursorNs, cursorId, server, this.cursorOptions),
+      callback
+    );
   }
 }

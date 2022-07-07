@@ -80,6 +80,7 @@ export interface AbstractCursorOptions extends BSONSerializeOptions {
   readConcern?: ReadConcernLike;
   batchSize?: number;
   maxTimeMS?: number;
+  maxAwaitTimeMS?: number;
   /**
    * Comment to apply to the operation.
    *
@@ -161,25 +162,32 @@ export abstract class AbstractCursor<
     this[kKilled] = false;
     this[kOptions] = {
       readPreference:
-        options.readPreference && options.readPreference instanceof ReadPreference
+        options.readPreference instanceof ReadPreference
           ? options.readPreference
           : ReadPreference.primary,
-      ...pluckBSONSerializeOptions(options)
+      ...pluckBSONSerializeOptions(options),
+      batchSize: typeof options.batchSize === 'number' ? options.batchSize : 1000
     };
+
+    Object.defineProperty(this[kOptions], 'session', {
+      get: () => this[kSession],
+      enumerable: true,
+      configurable: true
+    });
 
     const readConcern = ReadConcern.fromOptions(options);
     if (readConcern) {
       this[kOptions].readConcern = readConcern;
     }
 
-    if (typeof options.batchSize === 'number') {
-      this[kOptions].batchSize = options.batchSize;
-    }
-
     // we check for undefined specifically here to allow falsy values
     // eslint-disable-next-line no-restricted-syntax
     if (options.comment !== undefined) {
       this[kOptions].comment = options.comment;
+    }
+
+    if (typeof options.maxAwaitTimeMS === 'number') {
+      this[kOptions].maxAwaitTimeMS = options.maxAwaitTimeMS;
     }
 
     if (typeof options.maxTimeMS === 'number') {
@@ -616,29 +624,7 @@ export abstract class AbstractCursor<
   ): void;
 
   /** @internal */
-  _getMore(batchSize: number, callback: Callback<Document>): void {
-    const cursorId = this[kId];
-    const cursorNs = this[kNamespace];
-    const server = this[kServer];
-
-    if (cursorId == null) {
-      callback(new MongoRuntimeError('Unable to iterate cursor with no id'));
-      return;
-    }
-
-    if (server == null) {
-      callback(new MongoRuntimeError('Unable to iterate cursor without selected server'));
-      return;
-    }
-
-    const getMoreOperation = new GetMoreOperation(cursorNs, cursorId, server, {
-      ...this[kOptions],
-      session: this[kSession],
-      batchSize
-    });
-
-    executeOperation(this[kClient], getMoreOperation, callback);
-  }
+  abstract _getMore(callback: Callback<Document>): void;
 
   /**
    * @internal
@@ -749,8 +735,7 @@ export function next<T>(
   }
 
   // otherwise need to call getMore
-  const batchSize = cursor[kOptions].batchSize || 1000;
-  cursor._getMore(batchSize, (err, response) => {
+  cursor._getMore((err, response) => {
     if (response) {
       const cursorId =
         typeof response.cursor.id === 'number'

@@ -1,8 +1,10 @@
 import type { Document } from '../bson';
+import { MongoRuntimeError } from '../error';
 import type { ExplainVerbosityLike } from '../explain';
 import type { MongoClient } from '../mongo_client';
 import { AggregateOperation, AggregateOptions } from '../operations/aggregate';
 import { executeOperation, ExecutionResult } from '../operations/execute_operation';
+import { GetMoreOperation } from '../operations/get_more';
 import type { ClientSession } from '../sessions';
 import type { Sort } from '../sort';
 import type { Callback, MongoDBNamespace } from '../utils';
@@ -15,8 +17,6 @@ export interface AggregationCursorOptions extends AbstractCursorOptions, Aggrega
 
 /** @internal */
 const kPipeline = Symbol('pipeline');
-/** @internal */
-const kOptions = Symbol('options');
 
 /**
  * The **AggregationCursor** class is an internal class that embodies an aggregation cursor on MongoDB
@@ -28,8 +28,6 @@ const kOptions = Symbol('options');
 export class AggregationCursor<TSchema = any> extends AbstractCursor<TSchema> {
   /** @internal */
   [kPipeline]: Document[];
-  /** @internal */
-  [kOptions]: AggregateOptions;
 
   /** @internal */
   constructor(
@@ -41,7 +39,6 @@ export class AggregationCursor<TSchema = any> extends AbstractCursor<TSchema> {
     super(client, namespace, options);
 
     this[kPipeline] = pipeline;
-    this[kOptions] = options;
   }
 
   get pipeline(): Document[] {
@@ -49,7 +46,7 @@ export class AggregationCursor<TSchema = any> extends AbstractCursor<TSchema> {
   }
 
   clone(): AggregationCursor<TSchema> {
-    const clonedOptions = mergeOptions({}, this[kOptions]);
+    const clonedOptions = mergeOptions({}, this.cursorOptions);
     delete clonedOptions.session;
     return new AggregationCursor(this.client, this.namespace, this[kPipeline], {
       ...clonedOptions
@@ -63,7 +60,6 @@ export class AggregationCursor<TSchema = any> extends AbstractCursor<TSchema> {
   /** @internal */
   _initialize(session: ClientSession, callback: Callback<ExecutionResult>): void {
     const aggregateOperation = new AggregateOperation(this.namespace, this[kPipeline], {
-      ...this[kOptions],
       ...this.cursorOptions,
       session
     });
@@ -74,6 +70,26 @@ export class AggregationCursor<TSchema = any> extends AbstractCursor<TSchema> {
       // TODO: NODE-2882
       callback(undefined, { server: aggregateOperation.server, session, response });
     });
+  }
+
+  _getMore(callback: Callback<Document>): void {
+    const cursorId = this.id;
+    const cursorNs = this.namespace;
+    const server = this.server;
+
+    if (cursorId == null) {
+      return callback(new MongoRuntimeError('Unable to iterate cursor with no id'));
+    }
+
+    if (server == null) {
+      return callback(new MongoRuntimeError('Unable to iterate cursor without selected server'));
+    }
+
+    executeOperation(
+      this.client,
+      new GetMoreOperation(cursorNs, cursorId, server, this.cursorOptions),
+      callback
+    );
   }
 
   /** Execute the explain for the cursor */
@@ -90,7 +106,6 @@ export class AggregationCursor<TSchema = any> extends AbstractCursor<TSchema> {
     return executeOperation(
       this.client,
       new AggregateOperation(this.namespace, this[kPipeline], {
-        ...this[kOptions], // NOTE: order matters here, we may need to refine this
         ...this.cursorOptions,
         explain: verbosity
       }),
