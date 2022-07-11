@@ -1,16 +1,16 @@
-import { expect } from 'chai';
-import * as sinon from 'sinon';
-
-import { LEGACY_HELLO_COMMAND } from '../../src/constants';
-import { MongoRuntimeError } from '../../src/error';
-import {
-  BufferPool,
+'use strict';
+const {
   eachAsync,
-  isHello,
   makeInterruptibleAsyncInterval,
-  shuffle
-} from '../../src/utils';
-import { createTimerSandbox } from './timer_sandbox';
+  BufferPool,
+  shuffle,
+  isHello
+} = require('../../src/utils');
+const { expect } = require('chai');
+const sinon = require('sinon');
+const { MongoRuntimeError } = require('../../src/error');
+const { LEGACY_HELLO_COMMAND } = require('../../src/constants');
+const { createTimerSandbox } = require('./timer_sandbox');
 
 describe('driver utils', function () {
   context('eachAsync()', function () {
