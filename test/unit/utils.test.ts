@@ -8,7 +8,6 @@ import {
   eachAsync,
   isHello,
   makeInterruptibleAsyncInterval,
-  parseIndexOptions,
   shuffle
 } from '../../src/utils';
 import { createTimerSandbox } from './timer_sandbox';
